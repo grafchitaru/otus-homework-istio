@@ -1,0 +1,143 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  APP_PORT: "8000"
+  APP_SERVICE_NAME: "webapp"
+  LOG_LEVEL: "debug"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-deployment-1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webapp-app
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: webapp-app
+        version: v1
+    spec:
+      containers:
+        - name: webapp-app
+          image: grafchitaru/webapp:1.0.0
+          imagePullPolicy: Always
+          ports:
+            - name: web
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: app-config
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-deployment-2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webapp-app
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: webapp-app
+        version: v2
+    spec:
+      containers:
+        - name: webapp-app
+          image: grafchitaru/webapp:2.0.0
+          imagePullPolicy: Always
+          ports:
+            - name: web
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: app-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-service
+spec:
+  type: NodePort
+  selector:
+    app: webapp-app
+  ports:
+    - protocol: TCP
+      name: http
+      port: 80
+      targetPort: web
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: webapp-dest-rule
+spec:
+  host: webapp-service
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+    - name: v2
+      labels:
+        version: v2
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: webapp-gateway
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*"
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: webapp-virtual-service
+spec:
+  hosts:
+    - "*"
+  gateways:
+    - webapp-gateway
+  http:
+    - route:
+        - destination:
+            host: webapp-service
+            subset: v1
+          weight: 50
+        - destination:
+            host: webapp-service
+            subset: v2
+          weight: 50
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  annotations:
+    kubernetes.io/ingress.class: "istio"
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Exact
+            backend:
+              service:
+                name: webapp-service
+                port:
+                  number: 80
